@@ -1,0 +1,104 @@
+---
+title: "Untitled"
+author: "John Lee"
+date: "23 October 2015"
+output: html_document
+---
+
+```{r load libraries}
+library(dplyr)
+library(caret)
+library(ggplot2)
+library(data.table)
+```
+
+
+```{r download and load data}
+if (!file.exists("train_set.csv")){ 
+train_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+download.file(train_url, "train_set.csv", method = 'curl')
+}
+training <- fread('train_set.csv')
+
+
+if (!file.exists("test_set.csv")){ 
+test_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+download.file(test_url, "test_set.csv", method = 'curl')
+}
+testing <- fread('test_set.csv')
+
+```
+```{r primary exploration, echo=FALSE, eval=FALSE}
+vars_testing <- names(testing);vars_training <- names(training)
+setdiff(union(vars_testing,vars_training),intersect(vars_testing,vars_training))
+
+which(nearZeroVar(training,saveMetrics = TRUE)$nzv)
+```
+
+
+```{r tidy up}
+nas_in_vars <- apply(is.na(training),2,sum)
+training <- select(training, which(nas_in_vars==0))
+training <- select(training,which(sapply(training, class)!="character" ), classe, -c(1:7))
+training$classe <- as.factor(training$classe)
+# No variables have a low variability
+any(nearZeroVar(training,saveMetrics = TRUE)$nzv)
+summary_by_class <- training %>%
+    group_by(classe) %>%
+    summarise_each(funs(mean))
+    
+    #names_training[nearZeroVar(training,saveMetrics = TRUE)$nzv]
+
+
+```
+
+```{r PML model}
+
+#fmla <- as.formula(paste("classe ~", paste(vars_for_model, collapse = "+")))
+# takes to long: mod_fit <- train(form = fmla, data = training, method = "rf")
+set.seed(1000)
+mod_fit <- train(classe~. , data = training,  method = 'rf')
+#splitting dataset; forearm <- select(training, classe , contains("forearm"))
+#could also use: indices_IL <- grep("^IL",names(training))
+preObj <- preProcess(training,method="pca",thresh = 0.7)
+
+
+```
+
+```{r rpart}
+# takes 30seconds apparently, accuracy 52%
+system.time(modelFit_pc <- train(classe ~.,
+method = "rpart",
+data = training))
+modelFit_pc
+```
+
+```{r rpart with pca}
+# time: 45 
+#accuracy: 33
+system.time({set.seed(1000)
+ctrl <- trainControl(preProcOptions = list(thresh = 0.7))
+modelFit_pc <- train(classe ~.,
+                     method = "rpart",
+                     preProcess = "pca",
+                     trControl = ctrl,    
+                     data = training)
+}
+)
+modelFit_pc
+```
+
+```{r rf}
+# time: 
+#accuracy: 
+system.time({set.seed(1000)
+modelFit_rf <- train(classe ~.,
+                     method = "rf",
+                     data = training)
+}
+)
+modelFit_pc
+```
+
+
+
