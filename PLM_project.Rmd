@@ -70,7 +70,7 @@ preObj <- preProcess(training,method="pca",thresh = 0.7)
 system.time(modelFit_pc <- train(classe ~.,
 method = "rpart",
 data = training))
-modelFit_pc
+modelFit_tree
 ```
 
 ```{r rpart with pca}
@@ -78,7 +78,7 @@ modelFit_pc
 #accuracy: 33
 system.time({set.seed(1000)
 ctrl <- trainControl(preProcOptions = list(thresh = 0.7))
-modelFit_pc <- train(classe ~.,
+modelFit_pc_tree <- train(classe ~.,
                      method = "rpart",
                      preProcess = "pca",
                      trControl = ctrl,    
@@ -88,7 +88,7 @@ modelFit_pc <- train(classe ~.,
 modelFit_pc
 ```
 
-```{r rf}
+```{r rf, cache=TRUE}
 # time: 
 #accuracy: 
 system.time({set.seed(1000)
@@ -97,7 +97,7 @@ modelFit_rf <- train(classe ~.,
                      data = training)
 }
 )
-modelFit_pc
+modelFit_rf
 ```
 
 
