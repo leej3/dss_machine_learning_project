@@ -1,15 +1,22 @@
 ---
-title: "Untitled"
+title: "Activity classification using accelerometer data"
 author: "John Lee"
-date: "23 October 2015"
+date: "24 October 2015"
 output: html_document
 ---
+```{r instructions, eval = False, echo = FALSE}
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+```
+
+
 
 ```{r load libraries}
+library(plyr)
 library(dplyr)
 library(caret)
 library(ggplot2)
 library(data.table)
+library(randomForest)
 ```
 
 
@@ -18,21 +25,30 @@ if (!file.exists("train_set.csv")){
 train_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
 download.file(train_url, "train_set.csv", method = 'curl')
 }
-training <- fread('train_set.csv')
+f_training <- fread('train_set.csv')
+inTrain <-  createDataPartition(f_training[,classe], p = 0.1)
+training <-  f_training[inTrain$Resample1]
+testing <-  f_training[-inTrain$Resample1,]
 
+```
 
+```{r prediction set, eval=FALSE,echo=FALSE}
 if (!file.exists("test_set.csv")){ 
 test_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
 download.file(test_url, "test_set.csv", method = 'curl')
 }
-testing <- fread('test_set.csv')
-
+unclassified_testing <- fread('test_set.csv')
 ```
+
+
 ```{r primary exploration, echo=FALSE, eval=FALSE}
 vars_testing <- names(testing);vars_training <- names(training)
 setdiff(union(vars_testing,vars_training),intersect(vars_testing,vars_training))
-
 which(nearZeroVar(training,saveMetrics = TRUE)$nzv)
+
+summary_by_class <- training %>%
+group_by(classe) %>%
+summarise_each(funs(mean))
 ```
 
 
@@ -43,13 +59,6 @@ training <- select(training,which(sapply(training, class)!="character" ), classe
 training$classe <- as.factor(training$classe)
 # No variables have a low variability
 any(nearZeroVar(training,saveMetrics = TRUE)$nzv)
-summary_by_class <- training %>%
-    group_by(classe) %>%
-    summarise_each(funs(mean))
-    
-    #names_training[nearZeroVar(training,saveMetrics = TRUE)$nzv]
-
-
 ```
 
 ```{r PML model}
@@ -57,7 +66,7 @@ summary_by_class <- training %>%
 #fmla <- as.formula(paste("classe ~", paste(vars_for_model, collapse = "+")))
 # takes to long: mod_fit <- train(form = fmla, data = training, method = "rf")
 set.seed(1000)
-mod_fit <- train(classe~. , data = training,  method = 'rf')
+
 #splitting dataset; forearm <- select(training, classe , contains("forearm"))
 #could also use: indices_IL <- grep("^IL",names(training))
 preObj <- preProcess(training,method="pca",thresh = 0.7)
@@ -66,15 +75,15 @@ preObj <- preProcess(training,method="pca",thresh = 0.7)
 ```
 
 ```{r rpart}
-# takes 30seconds apparently, accuracy 52%
-system.time(modelFit_pc <- train(classe ~.,
+# takes 30seconds apparently, accuracy 52% (on full)
+system.time(modelFit_tree <- train(classe ~.,
 method = "rpart",
 data = training))
 modelFit_tree
 ```
 
 ```{r rpart with pca}
-# time: 45 
+# time: 45 (on full)
 #accuracy: 33
 system.time({set.seed(1000)
 ctrl <- trainControl(preProcOptions = list(thresh = 0.7))
@@ -85,20 +94,70 @@ modelFit_pc_tree <- train(classe ~.,
                      data = training)
 }
 )
-modelFit_pc
+modelFit_pc_tree
 ```
 
+time <- system.time({set.seed(1000);mod_fit_rf_from_package <- randomForest(formula = classe~., data = training, mtry = 27)});time; mod_fit_rf_from_package
+
+
 ```{r rf, cache=TRUE}
-# time: 
-#accuracy: 
-system.time({set.seed(1000)
+# time: 551(on 10th of data)
+#accuracy: 91%
+time <- system.time({set.seed(1000)
 modelFit_rf <- train(classe ~.,
                      method = "rf",
                      data = training)
 }
 )
+time
 modelFit_rf
 ```
 
 
+```{r rf with pca,cache = TRUE}
+# time: 
+#accuracy: 
+time <- system.time({set.seed(1000)
+ctrl <- trainControl(preProcOptions = list(thresh = 0.7))
+modelFit_pc_rf <- train(classe ~.,
+                     method = "rf",
+                     preProcess = "pca",
+                     trControl = ctrl,    
+                     data = training)
+}
+)
+time
+modelFit_pc_rf
+```
 
+```{r gbm on 10th of data}
+# time: 263
+#accuracy: 89
+system.time({set.seed(1000)
+modelFit_gbm <- train(classe ~.,
+                     method = "gbm", verbose = FALSE,
+                     data = training)
+}
+)
+modelFit_gbm
+```
+
+
+
+```{r, eval=FALSE}
+rmse described at end of 2-8 ( and for out of sample error)
+```
+
+
+
+```{r ada, cache=TRUE, eval = FALSE, echo =FALSE}
+# time: 
+#accuracy: 
+system.time({set.seed(1000)
+modelFit_ada <- train(classe ~.,
+                     method = "ada",
+                     data = training)
+}
+)
+modelFit_ada
+```
