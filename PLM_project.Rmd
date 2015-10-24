@@ -4,21 +4,23 @@ author: "John Lee"
 date: "24 October 2015"
 output: html_document
 ---
-```{r instructions, eval = False, echo = FALSE}
-The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+```{r instructions, eval = FALSE, echo = FALSE}
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction mod_fit to predict 20 different test cases. 
 ```
 
 
 
-```{r load libraries}
-library(plyr)
-library(dplyr)
-library(caret)
-library(ggplot2)
-library(data.table)
-library(randomForest)
+```{r load libraries, warning=FALSE,results='hide'}
+library(plyr, quietly= TRUE)
+library(dplyr, quietly= TRUE)
+library(caret, quietly= TRUE)
+library(ggplot2, quietly= TRUE)
+library(data.table, quietly= TRUE)
+library(gbm, quietly= TRUE)
+library(randomForest, quietly= TRUE)
 ```
 
+The dataset was loaded and partitioned into training and testing sets. The training set was additionally subsampled to provide a smaller set to initially test algorithms on. This initial testing was performed to get a rough estimate of the accuracy and computation time for each type of model.
 
 ```{r download and load data}
 if (!file.exists("train_set.csv")){ 
@@ -26,19 +28,16 @@ train_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.c
 download.file(train_url, "train_set.csv", method = 'curl')
 }
 f_training <- fread('train_set.csv')
-inTrain <-  createDataPartition(f_training[,classe], p = 0.1)
+inTrain <-  createDataPartition(f_training[,classe], p = 0.8)
 training <-  f_training[inTrain$Resample1]
-testing <-  f_training[-inTrain$Resample1,]
+testing <-  f_training[-inTrain$Resample1]
 
+# Sub sampling data for a quick test of different methods
+in_sub_Train <-  createDataPartition(training[,classe], p = 0.1)
+    sub_training <-  training[in_sub_Train$Resample1]
 ```
 
-```{r prediction set, eval=FALSE,echo=FALSE}
-if (!file.exists("test_set.csv")){ 
-test_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
-download.file(test_url, "test_set.csv", method = 'curl')
-}
-unclassified_testing <- fread('test_set.csv')
-```
+
 
 
 ```{r primary exploration, echo=FALSE, eval=FALSE}
@@ -51,113 +50,121 @@ group_by(classe) %>%
 summarise_each(funs(mean))
 ```
 
+Non-numerical and irrelevant metadata variables were removed to leave only the variable for classification (classe) and predictor variables. All variables contained sufficient variance to be potentially useful as predictors
 
 ```{r tidy up}
-nas_in_vars <- apply(is.na(training),2,sum)
-training <- select(training, which(nas_in_vars==0))
-training <- select(training,which(sapply(training, class)!="character" ), classe, -c(1:7))
-training$classe <- as.factor(training$classe)
+extract_useful_variables <- function(dataset){ 
+nas_in_vars <- apply(is.na(dataset),2,sum)
+dataset <- select(dataset, which(nas_in_vars==0))
+dataset <- select(dataset,which(sapply(dataset, class)!="character" ), classe, -c(1:7))
+dataset$classe <- as.factor(dataset$classe)
+dataset
+}
+sub_training <- extract_useful_variables(sub_training)
+training <- extract_useful_variables(training)
 # No variables have a low variability
-any(nearZeroVar(training,saveMetrics = TRUE)$nzv)
+near_zero_variables <- any(nearZeroVar(training,saveMetrics = TRUE)$nzv)
 ```
 
-```{r PML model}
-
-#fmla <- as.formula(paste("classe ~", paste(vars_for_model, collapse = "+")))
-# takes to long: mod_fit <- train(form = fmla, data = training, method = "rf")
-set.seed(1000)
-
-#splitting dataset; forearm <- select(training, classe , contains("forearm"))
-#could also use: indices_IL <- grep("^IL",names(training))
-preObj <- preProcess(training,method="pca",thresh = 0.7)
+A simple decision tree constructed using the rpart package is computed rapidly but has poor accuracy.
 
 
+```{r rpart, cache= TRUE, warning = FALSE, echo=TRUE}
+time_rpart <-system.time({set.seed(1000)
+    mod_fit <- train(classe ~.,
+                    method = "rpart",
+                    preProcess = c("center","scale"),
+                    data = sub_training)})
+conf_matrix <- confusionMatrix(sub_training$classe,predict(mod_fit,sub_training))
+time_rpart
+conf_matrix$overall[1]
 ```
 
-```{r rpart}
-# takes 30seconds apparently, accuracy 52% (on full)
-system.time(modelFit_tree <- train(classe ~.,
-method = "rpart",
-data = training))
-modelFit_tree
-```
+The model was not improved when principal components of the variables were used.
 
-```{r rpart with pca}
-# time: 45 (on full)
-#accuracy: 33
-system.time({set.seed(1000)
-ctrl <- trainControl(preProcOptions = list(thresh = 0.7))
-modelFit_pc_tree <- train(classe ~.,
+```{r rpart with pca, cache= TRUE, warning = FALSE, echo=TRUE}
+time_rpart_pca <- system.time({set.seed(1000)
+    ctrl <- trainControl(preProcOptions = list(thresh = 0.8))
+    mod_fit <- train(classe ~.,
                      method = "rpart",
                      preProcess = "pca",
                      trControl = ctrl,    
-                     data = training)
-}
-)
-modelFit_pc_tree
+                     data = sub_training)})
+conf_matrix <- confusionMatrix(sub_training$classe,predict(mod_fit,sub_training))
+time_rpart_pca
+conf_matrix$overall[1]
 ```
 
-time <- system.time({set.seed(1000);mod_fit_rf_from_package <- randomForest(formula = classe~., data = training, mtry = 27)});time; mod_fit_rf_from_package
+The generalised boosted regression modelling (gbm package) provided greatly improved accuracy.
 
+```{r gbm on 10th of data, cache= TRUE, warning = FALSE, echo=TRUE}
+time_gbm <- system.time({set.seed(1000)
+mod_fit <- train(classe ~.,
+                     method = "gbm", verbose = FALSE,
+                     data = sub_training)
+}
+)
+conf_matrix <- confusionMatrix(sub_training$classe,predict(mod_fit,sub_training))
+time_gbm
+conf_matrix$overall[1]
+```
+Finally, the random forest algorithm provided good accuracy but took a long time to run. 
 
-```{r rf, cache=TRUE}
-# time: 551(on 10th of data)
-#accuracy: 91%
-time <- system.time({set.seed(1000)
-modelFit_rf <- train(classe ~.,
+```{r rf, cache=TRUE, echo=TRUE}
+time_random_forest <- system.time({set.seed(1000)
+mod_fit <- train(classe ~.,
                      method = "rf",
-                     data = training)
+                     data = sub_training)
 }
 )
-time
-modelFit_rf
+conf_matrix <- confusionMatrix(sub_training$classe,predict(mod_fit,sub_training))
+time_random_forest
+conf_matrix$overall[1]
 ```
 
+A slight improvement when reducing the predictor variables using principal component analysis...
 
-```{r rf with pca,cache = TRUE}
-# time: 
-#accuracy: 
-time <- system.time({set.seed(1000)
-ctrl <- trainControl(preProcOptions = list(thresh = 0.7))
-modelFit_pc_rf <- train(classe ~.,
+```{r rf with pca,cache = TRUE, warning=FALSE}
+time_random_forest_pca <- system.time({set.seed(1000)
+ctrl <- trainControl(preProcOptions = list(thresh = 0.8))
+mod_fit <- train(classe ~.,
                      method = "rf",
                      preProcess = "pca",
                      trControl = ctrl,    
-                     data = training)
+                     data = sub_training)
 }
 )
-time
-modelFit_pc_rf
+conf_matrix <- confusionMatrix(sub_training$classe,predict(mod_fit,sub_training))
+time_random_forest_pca
+conf_matrix$overall[1]
+```
+This long time for computation is partly because the train caret package optimises the number of variables sampled at each node when constructing the trees. Using the randomForest package instead, with the 'mtry' variable set to 27, the model was built within an acceptable time. 
+
+
+```{r random forest defining mtry and ntree, cache= TRUE, warning = FALSE, echo=TRUE}
+time_rf_without_caret <- system.time({set.seed(1000);mod_fit <- randomForest(formula = classe~., data = sub_training, mtry = 27)})
+conf_matrix <- confusionMatrix(sub_training$classe,predict(mod_fit,sub_training))
+time_rf_without_caret
+conf_matrix$overall[1]
 ```
 
-```{r gbm on 10th of data}
-# time: 263
-#accuracy: 89
-system.time({set.seed(1000)
-modelFit_gbm <- train(classe ~.,
-                     method = "gbm", verbose = FALSE,
-                     data = training)
-}
-)
-modelFit_gbm
+This algorithm was then used on the full training set (consisting of 80% of the data) to produce an accuracy of X.
+
+```{r final model, eval= TRUE, cache= TRUE, warning = FALSE, echo=TRUE}
+final_model <- system.time({set.seed(1000);final_model <- randomForest(formula = classe~., data = training, mtry = 27)})
+conf_matrix <- confusionMatrix(training$classe,predict(final_model,training))
+final_model
+conf_matrix$overall[1]
 ```
 
-
-
-```{r, eval=FALSE}
+```{r, eval=FALSE, cache= FALSE, warning = FALSE, echo=TRUE}
 rmse described at end of 2-8 ( and for out of sample error)
 ```
 
-
-
-```{r ada, cache=TRUE, eval = FALSE, echo =FALSE}
-# time: 
-#accuracy: 
-system.time({set.seed(1000)
-modelFit_ada <- train(classe ~.,
-                     method = "ada",
-                     data = training)
+```{r prediction set, eval=FALSE,echo=FALSE}
+if (!file.exists("test_set.csv")){ 
+test_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+download.file(test_url, "test_set.csv", method = 'curl')
 }
-)
-modelFit_ada
+unclassified_testing <- fread('test_set.csv')
 ```
