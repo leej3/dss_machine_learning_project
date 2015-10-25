@@ -4,12 +4,12 @@ author: "John Lee"
 date: "24 October 2015"
 output: html_document
 ---
-```{r instructions, eval = FALSE, echo = FALSE}
-The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction mod_fit to predict 20 different test cases. 
-```
 
+#Summary
+This report describes the use of machine learning algorithms to develop a model to predict different classes of exercise from an accelerometer dataset. Accelerometers were used to detect activity on a dumbell, a belt and a forearm during weight-lifting. Improper technique was used in 4 out of 5 "classe" categories. The data was collected in 6 individuals. The final model achieved an out of sample accuracy of 32%.
+For more information on the dataset see  http://groupware.les.inf.puc-rio.br/har 
 
-
+##Loading libraries
 ```{r load libraries, warning=FALSE,results='hide'}
 library(plyr, quietly= TRUE, warn.conflicts = FALSE)
 library(dplyr, quietly= TRUE, warn.conflicts = FALSE)
@@ -24,7 +24,8 @@ library(gbm, quietly= TRUE, warn.conflicts = FALSE)
 library(randomForest, quietly= TRUE, warn.conflicts = FALSE)
 ```
 
-The dataset was loaded and partitioned into training and testing sets. As the data consisted of many samples measured from 6 individuals, the test and validation set was each chosen to be one of these individuals. The training set was additionally subsampled, still using all 4 remaining individuals, to provide a smaller set to initially test algorithms on. This initial testing was performed to get a rough estimate of the accuracy and computation time for each type of model.
+## Loading and processing the data
+The dataset was loaded and partitioned into training and testing sets. As the data consisted of many samples measured from 6 individuals, the test and validation set was each chosen to be one of these individuals. The training set was additionally subsampled, still using all 4 remaining individuals, to provide a smaller set to initially test algorithms on. This initial testing was performed to get a rough estimate of the accuracy and computation time for each type of model. 
 
 ```{r download and load data}
 if (!file.exists("train_set.csv")){ 
@@ -39,19 +40,6 @@ validation <- filter(f_training, user_name == "pedro")
 # Sub sampling data for a quick test of different methods
 in_sub_Train <-  createDataPartition(training[,classe], p = 0.1)
     sub_training <-  training[in_sub_Train$Resample1]
-```
-
-
-
-
-```{r primary exploration, echo=FALSE, eval=FALSE}
-vars_testing <- names(testing);vars_training <- names(training)
-setdiff(union(vars_testing,vars_training),intersect(vars_testing,vars_training))
-which(nearZeroVar(training,saveMetrics = TRUE)$nzv)
-
-summary_by_class <- training %>%
-group_by(classe) %>%
-summarise_each(funs(mean))
 ```
 
 Non-numerical and irrelevant metadata variables were removed to leave only the variable for classification (classe) and predictor variables. All variables contained sufficient variance to be potentially useful as predictors. All variables were used as the final model presented could be computed within a reasonable amount of time.
@@ -70,6 +58,7 @@ training <- extract_useful_variables(training)
 near_zero_variables <- any(nearZeroVar(training,saveMetrics = TRUE)$nzv)
 ```
 
+## A simple decision tree
 A simple decision tree constructed using the rpart package is computed rapidly but has reasonably poor accuracy as judged by the out of bag error rate, an estimate of the out of sample error rate calculated from the training set.
 
 
@@ -84,7 +73,7 @@ time_rpart
 conf_matrix$overall[1]
 ```
 
-The model was not improved when principal components of the variables were used.
+The model produced from the decision tree algorithm predicted classe with a `r conf_matrix$overall[1]*100`% in the test dataset. This performance was not improved when principal components of the predictors were used:
 
 ```{r rpart with pca, cache= TRUE, warning = FALSE, echo=TRUE}
 time_rpart_pca <- system.time({set.seed(1000)
@@ -99,8 +88,7 @@ time_rpart_pca
 conf_matrix$overall[1]
 ```
 
-The generalised boosted regression modelling (gbm package) provided greatly improved accuracy.
-
+## A boosting technique
 ```{r gbm on 10th of data, cache= TRUE, warning = FALSE, echo=TRUE}
 time_gbm <- system.time({set.seed(1000)
 mod_fit <- train(classe ~.,
@@ -108,11 +96,15 @@ mod_fit <- train(classe ~.,
                      data = sub_training)
 }
 )
+within_training_accuracy <- confusionMatrix(training$classe,predict(mod_fit,training))
 conf_matrix <- confusionMatrix(testing$classe,predict(mod_fit,testing))
 time_gbm
 conf_matrix$overall[1]
 ```
-Finally, the random forest algorithm provided good accuracy (100%) but took a long time to run. 
+The generalised boosted regression modelling (gbm package) did produce a model that classified well within the training dataset (`r 100*within_training_accuracy$overall[1]`% accuracy) but it still had poor out of sample accuracy due to overfitting.
+
+## Using a random forest
+Similarly, the random forest algorithm provided good accuracy only within the training set. 
 
 ```{r rf, cache=TRUE, echo=TRUE}
 time_random_forest <- system.time({set.seed(1000)
@@ -126,7 +118,7 @@ time_random_forest
 conf_matrix$overall[1]
 ```
 
-Reducing the number of predictor variables using principal component analysis helped to improve the speed of the algorithm:
+Reducing the number of predictor variables using principal component analysis helped to improve the speed of the random forest algorithm:
 
 ```{r rf with pca,cache = TRUE, warning=FALSE}
 time_random_forest_pca <- system.time({set.seed(1000)
@@ -142,55 +134,32 @@ conf_matrix <- confusionMatrix(testing$classe,predict(mod_fit,testing))
 time_random_forest_pca
 conf_matrix$overall[1]
 ```
-The computation of the random forest model is time-consuming in part due to the fact that the caret package optimises the number of variables sampled at each node when constructing the trees. Using the randomForest package instead, with the 'mtry' variable set to 27 deemed optimal using the train command in the caret package. This allowed the model to be built within an acceptable time: 
-
+The computation of the random forest model is time-consuming in part due to the fact that the caret package optimises the number of variables sampled at each node when constructing the trees. When using the randomForest package instead the model to be built within an acceptable time. The speed with which this model is computed makes it more practical to use.
 
 ```{r random forest defining mtry and ntree, cache= TRUE, warning = FALSE, echo=TRUE}
-time_rf_without_caret <- system.time({set.seed(1000);mod_fit <- randomForest(formula = classe~., data = sub_training, mtry = 27)})
+time_rf_without_caret <- system.time({set.seed(1000);mod_fit <- randomForest(formula = classe~., data = sub_training, importance = FALSE)})
 conf_matrix <- confusionMatrix(testing$classe,predict(mod_fit,testing))
 time_rf_without_caret
 conf_matrix$overall[1]
 ```
-
 This algorithm was then used on the full training set  to produce a model from as much data as possible.
 
-```{r final model, eval= TRUE, cache= TRUE, warning = FALSE, echo=TRUE}
-time_final_model <- system.time({set.seed(1000);final_model <- randomForest(formula = classe~., data = training, mtry = 27)})
-conf_matrix <- confusionMatrix(training$classe,predict(final_model,training))
-```
-
-
-```{r report of final model, echo = FALSE}
-time_final_model
+# The final model
+```{r final model, cache= TRUE, warning = FALSE, echo=TRUE}
+time_fm <- system.time({set.seed(1000);final_model <- randomForest(formula = classe~., data = training, importance = FALSE)})
+conf_matrix <- confusionMatrix(testing$classe,predict(mod_fit,testing))
+time_fm
 conf_matrix$overall[1]
 ```
 
 
-Using this model on the test set indicates a much lower accuracy due to overfitting to the 4 individuals in the training set.
-```{r out of sample error, cache = TRUE}
-confusion_matrix <- confusionMatrix(testing$classe,predict(final_model,testing))
-confusion_matrix
-```
 
-Predictions on the classe of the validation dataset provide an estimate the out of sample error rate for the final model:
+Classification of the validation dataset provides an estimate of the out of sample error rate for the final model:
+
 ```{r out of sample error, cache = TRUE}
 confusion_matrix <- confusionMatrix(validation$classe,predict(final_model,validation))
 confusion_matrix
 ```
+The model has an out of sample accuracy of 32% prinicpally due to the poor detection of the "C" and "D" activities.
 
-
-
-The out of estimate sample error for this model is very low. The accuracy of the model when applied to the test dataset was >99%. While the model uses 53 variables collected from accelerometers attached to the abdomen, dumbell and forearm, future investigation could attempt to reduce the number of accelerometers used and construct models with fewer prediction variables.
-
-
-```{r, eval=FALSE, cache= FALSE, warning = FALSE, echo=FALSE}
-#rmse described at end of 2-8 ( and for out of sample error)
-```
-
-```{r prediction set, eval=FALSE,echo=FALSE}
-if (!file.exists("test_set.csv")){ 
-test_url <- 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
-download.file(test_url, "test_set.csv", method = 'curl')
-}
-unclassified_testing <- fread('test_set.csv')
 ```
